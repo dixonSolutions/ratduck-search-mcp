@@ -220,8 +220,11 @@ async function fetchPage(
 ): Promise<string> {
   const base = ENDPOINTS[endpoint];
   if (!nextForm) {
+    // No referer on the first request: that matches `sec-fetch-site: none`, the
+    // way a browser reports a URL that was typed rather than clicked. Claiming a
+    // referer *and* `none` is a contradiction the anomaly checker can spot.
     const url = `${base}?${new URLSearchParams(baseParams).toString()}`;
-    return (await fetchText(url, { allowPrivate: true, headers: { referer: "https://duckduckgo.com/" } })).text;
+    return (await fetchText(url, { allowPrivate: true })).text;
   }
   const body = new URLSearchParams({ ...baseParams, ...nextForm }).toString();
   return (

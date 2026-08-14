@@ -8,7 +8,8 @@ maintain by hand, and no manual `npm publish`.
 `.github/workflows/release.yml` runs on every push to `main`:
 
 1. Read `version` from `package.json` and the current published version from npm.
-2. If they match, stop. Ordinary commits to `main` cost one cheap job.
+2. If they match — or if `NPM_TOKEN` is not configured yet — stop with a warning. Ordinary commits
+   to `main` cost one cheap job.
 3. If they differ: `npm ci`, typecheck, test, build.
 4. `npm publish --provenance --access public`.
 5. Tag the commit `v<version>` and push the tag.

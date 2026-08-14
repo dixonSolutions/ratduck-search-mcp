@@ -47,7 +47,7 @@ jobs:
       - run: shellcheck scripts/install.sh
 
   package:
-    name: pack
+    name: pack and install
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -56,4 +56,32 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
-      - run: npm pack --dry-run
+
+      - name: Pack and assemble the site
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NAME="$(node -p "require('./package.json').name")"
+          VERSION="$(node -p "require('./package.json').version")"
+          npm pack --pack-destination .
+          NAME="$NAME" VERSION="$VERSION" TARBALL="${NAME}-${VERSION}.tgz" node scripts/build-site.mjs
+          test -f "site/${NAME}-latest.tgz"
+          test -f site/index.html
+          test -f site/install.sh
+          node -e "JSON.parse(require('fs').readFileSync('site/versions.json','utf8'))"
+
+      # The whole distribution story is "download a tarball and install it", so
+      # prove that works end to end rather than trusting it.
+      - name: Install from the assembled site and run the binary
+        run: |
+          npx --yes http-server site -p 8787 --silent &
+          for _ in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8787/versions.json >/dev/null 2>&1 && break
+            sleep 1
+          done
+          export NPM_CONFIG_PREFIX="$RUNNER_TEMP/npm-global"
+          mkdir -p "$NPM_CONFIG_PREFIX"
+          export PATH="$NPM_CONFIG_PREFIX/bin:$PATH"
+          RATDUCK_BASE_URL=http://127.0.0.1:8787 RATDUCK_NO_CLAUDE=1 bash site/install.sh
+          ratduck-search-mcp --version
+          ratduck-search-mcp --help | grep -q ddg_top_results

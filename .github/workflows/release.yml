@@ -1,8 +1,10 @@
 name: Release
 
-# Every push to main is a release candidate: if package.json's version is not
-# on npm yet, it gets published, tagged and released. Otherwise the job is a
-# no-op, so ordinary commits to main cost nothing.
+# Distribution is GitHub Pages, not npm. Every push to main rebuilds the
+# tarball and redeploys the site, so the `latest` URL always matches main.
+# When package.json's version changes, the commit is also tagged and a GitHub
+# Release is cut with the tarball attached — Releases are the permanent,
+# immutable home of every version; Pages is the install surface in front of it.
 on:
   push:
     branches: [main]
@@ -10,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  pages: write
   id-token: write
 
 concurrency:
@@ -19,6 +22,9 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -28,63 +34,77 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          registry-url: https://registry.npmjs.org
 
-      - name: Read local and published versions
-        id: versions
-        env:
-          HAS_NPM_TOKEN: ${{ secrets.NPM_TOKEN != '' }}
+      - name: Read version
+        id: version
         run: |
           NAME="$(node -p "require('./package.json').name")"
-          LOCAL="$(node -p "require('./package.json').version")"
-          PUBLISHED="$(npm view "$NAME" version 2>/dev/null || echo none)"
-          echo "name=$NAME"           >> "$GITHUB_OUTPUT"
-          echo "local=$LOCAL"         >> "$GITHUB_OUTPUT"
-          echo "published=$PUBLISHED" >> "$GITHUB_OUTPUT"
-          if [ "$HAS_NPM_TOKEN" != "true" ]; then
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::NPM_TOKEN is not set, so nothing can be published. Add it under Settings → Secrets and variables → Actions. See docs/release.md."
-          elif [ "$LOCAL" != "$PUBLISHED" ]; then
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Releasing $NAME $LOCAL (npm has ${PUBLISHED})"
+          VERSION="$(node -p "require('./package.json').version")"
+          echo "name=$NAME"       >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tarball=${NAME}-${VERSION}.tgz" >> "$GITHUB_OUTPUT"
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "is_new=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::v$VERSION is already released; redeploying the site only"
           else
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::$NAME $LOCAL is already published; nothing to do"
+            echo "is_new=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::v$VERSION is new; it will be tagged and released"
           fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install
-        if: steps.versions.outputs.should_release == 'true'
-        run: npm ci
-
-      - name: Verify
-        if: steps.versions.outputs.should_release == 'true'
+      - name: Install and verify
         run: |
+          npm ci
           npm run typecheck
           npm test
-          npm run build
 
-      - name: Publish to npm
-        if: steps.versions.outputs.should_release == 'true'
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Tag the release commit
-        if: steps.versions.outputs.should_release == 'true'
+      - name: Pack
         run: |
-          TAG="v${{ steps.versions.outputs.local }}"
+          npm pack --pack-destination .
+          ls -l "${{ steps.version.outputs.tarball }}"
+
+      - name: Tag and release
+        if: steps.version.outputs.is_new == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$TAG" -m "$TAG"
           git push origin "$TAG"
-
-      - name: Create the GitHub Release
-        if: steps.versions.outputs.should_release == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="v${{ steps.versions.outputs.local }}"
           gh release create "$TAG" \
             --title "$TAG" \
             --generate-notes \
-            --verify-tag
+            --verify-tag \
+            "${{ steps.version.outputs.tarball }}"
+
+      - name: Assemble the site
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NAME: ${{ steps.version.outputs.name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TARBALL: ${{ steps.version.outputs.tarball }}
+        run: node scripts/build-site.mjs
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+      - name: Summary
+        run: |
+          {
+            echo "### ${{ steps.version.outputs.name }} v${{ steps.version.outputs.version }}"
+            echo
+            echo "Site: ${{ steps.deploy.outputs.page_url }}"
+            echo
+            echo '```bash'
+            echo "npm install -g ${{ steps.deploy.outputs.page_url }}${{ steps.version.outputs.name }}-latest.tgz"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

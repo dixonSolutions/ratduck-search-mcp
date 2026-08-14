@@ -1,7 +1,7 @@
 {
   "name": "ratduck-search-mcp",
   "version": "0.1.0",
-  "description": "MCP server that searches DuckDuckGo, scrapes arbitrary URLs, and filters/ranks results for agents.",
+  "description": "MCP server that searches DuckDuckGo, scrapes arbitrary URLs, and filters/ranks results for agents. Distributed from GitHub Pages, not the npm registry.",
   "keywords": [
     "mcp",
     "model-context-protocol",
@@ -72,10 +72,7 @@
     "tsx": "^4.23.12",
     "typescript": "^7.0.2"
   },
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
-  },
+  "private": true,
   "allowScripts": {
     "esbuild": true
   }

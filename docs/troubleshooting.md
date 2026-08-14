@@ -66,14 +66,31 @@ The converter handles headings, paragraphs, lists, code blocks, blockquotes, tab
 emphasis. Deeply nested or `div`-soup layouts degrade to flat paragraphs. Options: `format: "text"`
 if structure does not matter, or `format: "html"` with a `selector` if it matters a lot.
 
+## `EALLOWREMOTE` when installing
+
+npm 12 and newer refuse to install from a tarball URL unless you opt in. Either download first —
+
+```bash
+curl -fsSLO https://dixonsolutions.github.io/ratduck-search-mcp/ratduck-search-mcp-latest.tgz
+npm install -g ./ratduck-search-mcp-latest.tgz
+```
+
+— or pass `--allow-remote=all`. The install script already does the download-first version, so this
+only bites people installing by hand.
+
+## `ratduck-search-mcp: command not found` after installing
+
+The npm global bin directory is not on your PATH. Find it with `npm prefix -g` and add
+`<that>/bin` to your PATH, or use the absolute path in your MCP client config. GUI applications in
+particular often do not see the PATH your shell exports.
+
 ## The server does not appear in my client
 
 - Check it runs: `ratduck-search-mcp --version`.
 - Check the client's config path and JSON syntax — a trailing comma silently disables the whole
   file in most clients.
 - Restart the client. Most read MCP config only at startup.
-- If you used `npx`, the first launch downloads the package; a client with a short startup timeout
-  can give up. Install globally instead.
+- Use an absolute path in the client config if the client cannot resolve the command name.
 - Claude Code: `claude mcp list` shows what is registered.
 
 ## It starts and immediately "hangs"

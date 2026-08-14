@@ -5,7 +5,8 @@ Notable changes per release. Releases are cut automatically from `main`; see
 
 ## 0.1.0
 
-Initial release.
+Initial release. Distributed from GitHub Pages rather than the npm registry — see
+[docs/release.md](docs/release.md).
 
 - `ddg_search` — DuckDuckGo search with site restriction, region, safe search, time range, domain
   exclusion, ad filtering and automatic paging.

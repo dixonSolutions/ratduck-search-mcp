@@ -1,14 +1,15 @@
 # ratduck-search-mcp
 
 [![CI](https://github.com/dixonSolutions/ratduck-search-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/dixonSolutions/ratduck-search-mcp/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/ratduck-search-mcp.svg)](https://www.npmjs.com/package/ratduck-search-mcp)
+[![install](https://img.shields.io/badge/install-github%20pages-b8541c.svg)](https://dixonsolutions.github.io/ratduck-search-mcp/)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 An [MCP](https://modelcontextprotocol.io) server that gives an agent the open web: it searches
 DuckDuckGo by scraping the no-JavaScript front end, scrapes any URL you point it at, and filters
 and re-ranks results so the agent gets the *top* handful instead of a wall of links.
 
-No API keys. No headless browser. No search-provider bill.
+No API keys. No headless browser. No search-provider bill. Not on the npm registry either — it
+installs straight from [its GitHub Pages site](https://dixonsolutions.github.io/ratduck-search-mcp/).
 
 ## Tools
 
@@ -23,26 +24,30 @@ Full parameter reference: [docs/tools.md](docs/tools.md).
 
 ## Install
 
-One-liner (installs globally via npm, then prints the client config to paste):
+One-liner — checks your Node version, downloads the tarball, installs it globally, and prints the
+client config to paste:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dixonSolutions/ratduck-search-mcp/main/scripts/install.sh | bash
+curl -fsSL https://dixonsolutions.github.io/ratduck-search-mcp/install.sh | bash
 ```
 
-Or the plain npm route:
+Or do it by hand:
 
 ```bash
-npm install -g ratduck-search-mcp
+curl -fsSLO https://dixonsolutions.github.io/ratduck-search-mcp/ratduck-search-mcp-latest.tgz && npm install -g ./ratduck-search-mcp-latest.tgz
 ```
 
-Or skip installing entirely and let your MCP client run it via `npx -y ratduck-search-mcp`.
+Download first, install second — npm 12 refuses to fetch tarball URLs unless you pass
+`--allow-remote=all`, and a local file works on every npm version. Every released version is at a
+stable URL; [versions.json](https://dixonsolutions.github.io/ratduck-search-mcp/versions.json)
+lists them.
 
 ## Wire it into a client
 
 **Claude Code**
 
 ```bash
-claude mcp add ratduck -- npx -y ratduck-search-mcp
+claude mcp add ratduck -- ratduck-search-mcp
 ```
 
 **Claude Desktop / any client using `mcpServers` JSON**
@@ -51,8 +56,7 @@ claude mcp add ratduck -- npx -y ratduck-search-mcp
 {
   "mcpServers": {
     "ratduck": {
-      "command": "npx",
-      "args": ["-y", "ratduck-search-mcp"]
+      "command": "ratduck-search-mcp"
     }
   }
 }
@@ -69,7 +73,8 @@ More clients and troubleshooting: [docs/install.md](docs/install.md).
 The agent calls `ddg_top_results` with `count: 3`, `fetchContent: true`, and gets back ranked
 results plus the page text — one round trip.
 
-Programmatic use works too, since the package exports its internals:
+Programmatic use works too, since the package exports its internals (install the tarball as a
+project dependency the same way, `npm install ./ratduck-search-mcp-latest.tgz`):
 
 ```ts
 import { search } from "ratduck-search-mcp/ddg";
@@ -121,9 +126,11 @@ Architecture and contribution notes: [docs/architecture.md](docs/architecture.md
 
 ## Releasing
 
-Merging to `main` runs CI. If `package.json`'s `version` differs from what is on npm, the release
-workflow publishes the package with provenance, tags the commit `v<version>` and opens a GitHub
-Release. Nothing else needs doing — see [docs/release.md](docs/release.md).
+Every push to `main` rebuilds the tarball and redeploys the
+[Pages site](https://dixonsolutions.github.io/ratduck-search-mcp/), so the `-latest.tgz` URL always
+matches `main`. Bumping `version` in `package.json` additionally tags the commit and cuts a GitHub
+Release with the tarball attached — Releases are the permanent home of each version, Pages is the
+install surface in front of them. See [docs/release.md](docs/release.md).
 
 ## License
 

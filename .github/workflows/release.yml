@@ -1,0 +1,85 @@
+name: Release
+
+# Every push to main is a release candidate: if package.json's version is not
+# on npm yet, it gets published, tagged and released. Otherwise the job is a
+# no-op, so ordinary commits to main cost nothing.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Read local and published versions
+        id: versions
+        run: |
+          NAME="$(node -p "require('./package.json').name")"
+          LOCAL="$(node -p "require('./package.json').version")"
+          PUBLISHED="$(npm view "$NAME" version 2>/dev/null || echo none)"
+          echo "name=$NAME"           >> "$GITHUB_OUTPUT"
+          echo "local=$LOCAL"         >> "$GITHUB_OUTPUT"
+          echo "published=$PUBLISHED" >> "$GITHUB_OUTPUT"
+          if [ "$LOCAL" != "$PUBLISHED" ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Releasing $NAME $LOCAL (npm has ${PUBLISHED})"
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$NAME $LOCAL is already published; nothing to do"
+          fi
+
+      - name: Install
+        if: steps.versions.outputs.should_release == 'true'
+        run: npm ci
+
+      - name: Verify
+        if: steps.versions.outputs.should_release == 'true'
+        run: |
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Publish to npm
+        if: steps.versions.outputs.should_release == 'true'
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Tag the release commit
+        if: steps.versions.outputs.should_release == 'true'
+        run: |
+          TAG="v${{ steps.versions.outputs.local }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "$TAG"
+
+      - name: Create the GitHub Release
+        if: steps.versions.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.versions.outputs.local }}"
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            --verify-tag

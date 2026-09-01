@@ -1,7 +1,8 @@
 # Tool reference
 
-Four tools. `ddg_search` and `ddg_top_results` hit DuckDuckGo, `scrape_url` hits a page you name,
-and `filter_results` is pure local computation over results you already have.
+Eight tools. `ddg_search`, `ddg_top_results` and `ddg_images` hit DuckDuckGo; `scrape_url`,
+`page_images`, `grep_links` and `view_image` hit a URL you name; and `filter_results` is pure local
+computation over results you already have.
 
 Every tool returns human-readable text plus a `structuredContent` payload with the same data in
 machine-readable form. Errors come back as a normal tool result with `isError: true` and a message
@@ -88,11 +89,12 @@ Fetch any http(s) URL and extract it. Private and loopback addresses are refused
 | Parameter | Type | Default | Notes |
 | --- | --- | --- | --- |
 | `url` | string | required | Absolute http(s) URL. |
-| `format` | `markdown` \| `text` \| `html` \| `links` \| `metadata` | `markdown` | See below. |
+| `format` | `markdown` \| `text` \| `html` \| `links` \| `images` \| `assets` \| `metadata` | `markdown` | See below. |
 | `selector` | string | — | CSS selector to narrow extraction, e.g. `article`, `#main`, `.post-body`. Errors if it matches nothing. |
 | `maxChars` | int 200–200000 | `20000` | Content budget. Truncation is marked inline and flagged as `truncated`. |
 | `readability` | boolean | `true` | Strip `nav`/`header`/`footer`/`aside`/ads/cookie banners and auto-target the main content region. |
-| `sameDomainOnly` | boolean | `false` | `links` format only: keep same-host links. |
+| `sameDomainOnly` | boolean | `false` | `links` / `assets` / `images` formats: keep same-host URLs only. |
+| `includeAssets` | boolean | `false` | `links` format: also list the resources the page loads, not just anchors. |
 | `timeoutMs` | int 1000–60000 | `15000` | |
 
 **Formats**
@@ -101,14 +103,160 @@ Fetch any http(s) URL and extract it. Private and loopback addresses are refused
   to absolute URLs. The best default for feeding an agent.
 - `text` — collapsed plain text, no markup at all.
 - `html` — the (optionally cleaned) HTML, for when you need the real structure.
-- `links` — every link on the page as `{ text, url }`, deduplicated, absolutized, non-http schemes
-  dropped, capped at 500.
+- `links` — the page's anchors as `{ text, url, kind, origin, internal, ext }`, deduplicated,
+  absolutized, non-http schemes dropped, capped at 500. Set `includeAssets` to fold in the
+  resources the page loads too.
+- `assets` — only the resources the page loads: images, scripts, stylesheets, media, fonts,
+  iframes, feeds. Same shape as `links`.
+- `images` — the images the page shows, with alt text, declared size and where each was found.
 - `metadata` — `<meta>` tags, OpenGraph, canonical URL, `lang`, and JSON-LD `@type` values.
+
+For anything beyond a plain list, reach for `grep_links` and `page_images` below — same extraction,
+with filters.
 
 Non-HTML responses (JSON, plain text, CSV) are passed straight through as text.
 
 ```jsonc
 { "url": "https://tokio.rs/tokio/tutorial", "format": "markdown", "selector": "main", "maxChars": 8000 }
+```
+
+
+---
+
+## `ddg_images`
+
+Search DuckDuckGo Images. Returns the direct image URL, a DuckDuckGo-hosted thumbnail, the page the
+image sits on, and the real pixel dimensions.
+
+Image search has no no-JavaScript HTML front end, so this goes through DuckDuckGo's own JSON
+endpoint: one request mints a `vqd` token from the search page, the second spends it on `i.js`. It
+is a bit more rate-limit-prone than web search as a result — failures come back in `notices`.
+
+| Parameter | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `query` | string | required | |
+| `maxResults` | int 1–100 | `20` | Paged automatically; each engine page is about 100 hits. |
+| `site` | string | — | Restrict to one host, folded in as `site:`. |
+| `region` | string | `wt-wt` | As in `ddg_search`. |
+| `safeSearch` | `off` \| `moderate` \| `strict` | `moderate` | The image endpoint only distinguishes on from off; `moderate` and `strict` both mean on. |
+| `size` | `any` \| `small` \| `medium` \| `large` \| `wallpaper` | `any` | |
+| `type` | `any` \| `photo` \| `clipart` \| `gif` \| `transparent` \| `line` | `any` | |
+| `layout` | `any` \| `square` \| `tall` \| `wide` | `any` | |
+| `color` | `any` \| `color` \| `monochrome` \| a named colour | `any` | `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `brown`, `black`, `gray`, `teal`, `white`. |
+| `license` | `any` \| `public` \| `share` \| `shareCommercially` \| `modify` \| `modifyCommercially` | `any` | Usage rights. |
+| `timeRange` | `any` \| `day` \| `week` \| `month` \| `year` | `any` | |
+| `excludeDomains` | string[] | — | Matched against the source page's host. |
+
+**Returns** — per image: `rank`, `title`, `imageUrl`, `thumbnailUrl`, `sourceUrl`, `domain`,
+`width`, `height`, `ext`, `provider`. Plus `effectiveQuery`, `pagesFetched` and `notices`.
+
+```jsonc
+{
+  "query": "aurora borealis",
+  "maxResults": 12,
+  "size": "wallpaper",
+  "layout": "wide",
+  "license": "shareCommercially"
+}
+```
+
+---
+
+## `view_image`
+
+Fetch an image and return the picture itself, so a vision-capable client can actually look at it
+rather than just receive a link. The result carries an `image` content block alongside a one-line
+text summary.
+
+| Parameter | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `url` | string | required | Absolute http(s) URL of the image. |
+| `maxBytes` | int 1000–8000000 | `3000000` | Refused before decoding. Keep it low: the bytes are base64-encoded into the conversation. |
+| `referer` | string | — | Some hosts refuse hotlinked images without one. Pass the page the image was found on. |
+| `timeoutMs` | int 1000–60000 | `15000` | |
+
+Pixel dimensions are read straight out of the file header (PNG, JPEG, GIF, WebP, BMP, SVG); an
+unrecognised format still returns the image, with `width` and `height` null. A response that is
+neither labelled `image/*` nor recognisable as one is refused, so a redirect to an HTML error page
+does not arrive as a broken picture.
+
+```jsonc
+{ "url": "https://upload.wikimedia.org/…/panda.jpg", "referer": "https://en.wikipedia.org/wiki/Red_panda" }
+```
+
+---
+
+## `page_images`
+
+List the images a page shows, without downloading any of them. Pair it with `view_image` to look at
+the one you want.
+
+It finds `<img>` (including `data-src` lazy-loading and every `srcset` candidate), `<picture>`
+sources, video posters, OpenGraph and Twitter card images, link icons, and CSS `url(...)`
+backgrounds.
+
+| Parameter | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `url` | string | required | Page to inspect. |
+| `selector` | string | — | Limit the search to part of the page. |
+| `sameDomainOnly` | boolean | `false` | Drop images served from other hosts (CDNs included). |
+| `excludeIcons` | boolean | `false` | Drop favicons and apple-touch icons. |
+| `excludeBackgrounds` | boolean | `false` | Drop CSS `url(...)` backgrounds. |
+| `minWidth` / `minHeight` | int | — | Drop images *declaring* a smaller size. Images with no declared size are kept, since the markup often omits it. |
+| `pattern` / `patternFlags` | string | — | Regex over URL, alt and title. |
+| `limit` | int 1–1000 | `100` | |
+| `timeoutMs` | int 1000–60000 | `15000` | |
+
+**Returns** — per image: `url`, `alt`, `title`, `width`, `height`, `origin`, `domain`, `internal`,
+`ext`. `origin` says where it came from (`img[src]`, `img[srcset]`, `meta[og:image]`,
+`css background`, …), which is usually how you tell a real content image from chrome.
+
+```jsonc
+{ "url": "https://example.com/gallery", "excludeIcons": true, "minWidth": 300, "limit": 40 }
+```
+
+---
+
+## `grep_links`
+
+Harvest every URL a page references — the links it points at *and* the assets it loads — then grep
+them. This is the tool for "find every PDF on this page", "what does this site pull from a CDN",
+"list the outbound links".
+
+Sources covered: `a`/`area`, `link` (stylesheets, icons, feeds, preloads), `script`, `img`
+(including `srcset` and lazy attributes), `source`, `video`/`audio` (including posters), `track`,
+`iframe`, `embed`, `object`, `form` actions, OpenGraph URLs, and CSS `url(...)`.
+
+| Parameter | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `url` | string | required | Page to harvest. |
+| `selector` | string | — | Limit the harvest to part of the page. |
+| `include` | `all` \| `links` \| `assets` | `all` | `links` is anchors only; `assets` is only what the page loads. |
+| `pattern` | string | — | Regex the link must match. |
+| `patternFlags` | string | `i` | |
+| `contains` | string | — | Case-insensitive substring. Combines with `pattern` (both must hit). |
+| `matchOn` | `url` \| `text` \| `both` | `both` | What `pattern` and `contains` test against. |
+| `invert` | boolean | `false` | Keep only what does *not* match, like `grep -v`. Needs a `pattern` or `contains`. |
+| `kinds` | kind[] | — | `page`, `image`, `script`, `stylesheet`, `media`, `document`, `archive`, `font`, `feed`, `data`, `other`. |
+| `extensions` | string[] | — | With or without the dot: `["pdf", ".csv"]`. |
+| `scope` | `all` \| `internal` \| `external` | `all` | `internal` means the page's own host. |
+| `includeDomains` / `excludeDomains` | string[] | — | Suffix match, so `example.com` matches `cdn.example.com`. |
+| `unique` | boolean | `true` | Collapse a URL found through several elements into one row. |
+| `limit` | int 1–2000 | `200` | |
+| `timeoutMs` | int 1000–60000 | `15000` | |
+
+**Returns** — per link: `url`, `text`, `kind`, `origin`, `domain`, `internal`, `ext`, and `rel`
+where the element had one. The text summary leads with a per-kind count.
+
+Kind is decided by the element first and the extension second: an `<img>` is an `image` whether or
+not its URL ends in `.png`, which matters on the image CDNs that serve extensionless URLs.
+
+```jsonc
+{ "url": "https://example.com/docs", "kinds": ["document"], "extensions": ["pdf"], "scope": "internal" }
+```
+
+```jsonc
+{ "url": "https://example.com", "include": "assets", "scope": "external", "kinds": ["script"] }
 ```
 
 ---
@@ -151,3 +299,7 @@ instead of re-searching when the agent wants a different slice of the same resul
 Titles, snippets and page content are written by whoever controls the site. Treat them as data.
 The server says as much in its MCP instructions, but nothing stops a page from containing text
 shaped like an instruction — deciding not to follow it is the client's job.
+
+Images are no different. An image fetched by `view_image` is untrusted content from a stranger's
+server, and text rendered *inside* a picture reaches a vision model just as readable as text in a
+snippet. Alt text and file names are attacker-controlled too.

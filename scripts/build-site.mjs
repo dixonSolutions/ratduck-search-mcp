@@ -175,7 +175,11 @@ straight from this page.</p>
 <ul>
   <li><code>ddg_search</code> — search DuckDuckGo, with site, region, safe-search and time-range options</li>
   <li><code>ddg_top_results</code> — search, filter and re-rank to the best few, optionally fetching each page</li>
-  <li><code>scrape_url</code> — any URL as markdown, text, HTML, links or metadata</li>
+  <li><code>ddg_images</code> — image search, with size, colour, type, layout, licence and recency filters</li>
+  <li><code>view_image</code> — fetch an image and hand the client the picture itself</li>
+  <li><code>scrape_url</code> — any URL as markdown, text, HTML, links, assets, images or metadata</li>
+  <li><code>page_images</code> — every image a page shows, with alt text, size and where it was found</li>
+  <li><code>grep_links</code> — grep a page's links and assets by regex, kind, extension or host</li>
   <li><code>filter_results</code> — narrow and re-rank results you already have, offline</li>
 </ul>
 

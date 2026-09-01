@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import dns from "node:dns/promises";
 import net from "node:net";
 
@@ -121,6 +122,91 @@ export async function assertPublicUrl(rawUrl: string): Promise<URL> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export interface FetchBinaryResult {
+  body: Buffer;
+  status: number;
+  finalUrl: string;
+  contentType: string;
+  bytes: number;
+}
+
+/**
+ * Fetch a URL as raw bytes. Same guards as `fetchText` — private-network check,
+ * timeout, size cap — but no decoding, so it can carry an image. Unlike `fetchText`
+ * it does not retry: a failed image fetch fails, rather than costing another round trip.
+ */
+export async function fetchBinary(
+  rawUrl: string,
+  options: FetchOptions = {},
+): Promise<FetchBinaryResult> {
+  const {
+    headers = {},
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    maxBytes = DEFAULT_MAX_BYTES,
+    allowPrivate = false,
+  } = options;
+
+  if (!allowPrivate) await assertPublicUrl(rawUrl);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(rawUrl, {
+      redirect: "follow",
+      signal: controller.signal,
+      headers: {
+        "user-agent": nextUserAgent(),
+        accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "accept-language": "en-US,en;q=0.9",
+        "sec-fetch-dest": "image",
+        "sec-fetch-mode": "no-cors",
+        "sec-fetch-site": "cross-site",
+        ...headers,
+      },
+    });
+
+    if (response.status >= 400) {
+      throw new FetchError(`Upstream returned ${response.status}`, "status", response.status);
+    }
+
+    const contentType = response.headers.get("content-type") ?? "";
+    const declared = Number(response.headers.get("content-length") ?? 0);
+    if (declared && declared > maxBytes) {
+      throw new FetchError(
+        `Response is ${declared} bytes, over the ${maxBytes} byte limit`,
+        "too_large",
+      );
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength > maxBytes) {
+      throw new FetchError(
+        `Response is ${buffer.byteLength} bytes, over the ${maxBytes} byte limit`,
+        "too_large",
+      );
+    }
+
+    return {
+      body: buffer,
+      status: response.status,
+      finalUrl: response.url || rawUrl,
+      contentType,
+      bytes: buffer.byteLength,
+    };
+  } catch (error) {
+    if (error instanceof FetchError) throw error;
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new FetchError(`Request to ${rawUrl} timed out after ${timeoutMs}ms`, "timeout");
+    }
+    throw new FetchError(
+      `Request to ${rawUrl} failed: ${error instanceof Error ? error.message : String(error)}`,
+      "network",
+    );
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Fetch a URL as text, with timeout, bounded body size and retry on 429/5xx. */

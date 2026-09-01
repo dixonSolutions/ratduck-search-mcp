@@ -1,7 +1,15 @@
 import * as cheerio from "cheerio";
 import type { AnyNode } from "domhandler";
 import { FetchError, fetchText } from "./http.js";
-import type { ScrapeFormat, ScrapeResult, ScrapedLink } from "./types.js";
+import {
+  absolutize,
+  extractPageImages,
+  grepLinks,
+  harvestLinks,
+  type LinkGrepOptions,
+  type PageImageOptions,
+} from "./links.js";
+import type { PageImage, ScrapeFormat, ScrapeResult, ScrapedLink } from "./types.js";
 
 export interface ScrapeOptions {
   url: string;
@@ -12,8 +20,16 @@ export interface ScrapeOptions {
   /** Drop nav/header/footer/aside and other boilerplate before extracting. */
   readability?: boolean;
   timeoutMs?: number;
-  /** For the `links` format: keep only links on the page's own host. */
+  /** For the `links`, `assets` and `images` formats: keep only the page's own host. */
   sameDomainOnly?: boolean;
+  /** For the `links` format: also list the assets the page loads, not just anchors. */
+  includeAssets?: boolean;
+  /** Grep-style filters for the `links` and `assets` formats. */
+  linkFilter?: LinkGrepOptions;
+  /** Filters for the `images` format. */
+  imageFilter?: PageImageOptions;
+  /** Cap on how many links or images are returned. Default 500. */
+  maxItems?: number;
 }
 
 const NOISE_SELECTORS = [
@@ -137,17 +153,6 @@ function toMarkdown($: cheerio.CheerioAPI, root: cheerio.Cheerio<AnyNode>, baseU
   return parts.join("\n\n");
 }
 
-function absolutize(href: string, baseUrl: string): string | null {
-  try {
-    const url = new URL(href, baseUrl);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    url.hash = "";
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
-
 function extractMetadata($: cheerio.CheerioAPI): Record<string, string> {
   const metadata: Record<string, string> = {};
   $("meta").each((_, element) => {
@@ -177,6 +182,23 @@ function extractMetadata($: cheerio.CheerioAPI): Record<string, string> {
   return metadata;
 }
 
+/**
+ * Narrow a document to `selector` for the link/image harvesters, which walk a
+ * whole document rather than a Cheerio selection.
+ */
+function scopedDocument(
+  $: cheerio.CheerioAPI,
+  selector: string | undefined,
+  finalUrl: string,
+): cheerio.CheerioAPI {
+  if (!selector) return $;
+  const matched = $(selector);
+  if (matched.length === 0) {
+    throw new FetchError(`Selector "${selector}" matched nothing on ${finalUrl}`, "unsupported");
+  }
+  return cheerio.load(matched.map((_, element) => $.html(element)).get().join("\n"));
+}
+
 /** Fetch a URL and extract it in the requested shape. */
 export async function scrapeUrl(options: ScrapeOptions): Promise<ScrapeResult> {
   const {
@@ -187,6 +209,10 @@ export async function scrapeUrl(options: ScrapeOptions): Promise<ScrapeResult> {
     readability = true,
     timeoutMs,
     sameDomainOnly = false,
+    includeAssets = false,
+    linkFilter,
+    imageFilter,
+    maxItems = 500,
   } = options;
 
   const startedAt = Date.now();
@@ -206,6 +232,7 @@ export async function scrapeUrl(options: ScrapeOptions): Promise<ScrapeResult> {
       format: format === "html" ? "html" : "text",
       content,
       links: [],
+      images: [],
       metadata: {},
       truncated: response.text.length > content.length,
       bytes: response.bytes,
@@ -221,19 +248,17 @@ export async function scrapeUrl(options: ScrapeOptions): Promise<ScrapeResult> {
     null;
   const metadata = extractMetadata($);
 
-  if (format === "links") {
-    const links: ScrapedLink[] = [];
-    const seen = new Set<string>();
-    const host = new URL(response.finalUrl).hostname;
-    const scope = selector ? $(selector) : $.root();
-    scope.find("a[href]").each((_, element) => {
-      const node = $(element);
-      const absolute = absolutize(node.attr("href") ?? "", response.finalUrl);
-      if (!absolute || seen.has(absolute)) return;
-      if (sameDomainOnly && new URL(absolute).hostname !== host) return;
-      seen.add(absolute);
-      links.push({ text: collapse(node.text()).slice(0, 300), url: absolute });
+  if (format === "links" || format === "assets") {
+    const harvested = harvestLinks(
+      scopedDocument($, selector, response.finalUrl),
+      response.finalUrl,
+      format === "assets" ? { assetsOnly: true } : includeAssets ? {} : { anchorsOnly: true },
+    );
+    const filtered = grepLinks(harvested, {
+      ...linkFilter,
+      ...(sameDomainOnly ? { scope: "internal" as const } : {}),
     });
+    const links: ScrapedLink[] = filtered;
     return {
       url,
       finalUrl: response.finalUrl,
@@ -243,9 +268,37 @@ export async function scrapeUrl(options: ScrapeOptions): Promise<ScrapeResult> {
       description,
       format,
       content: "",
-      links: links.slice(0, 500),
+      links: links.slice(0, maxItems),
+      images: [],
       metadata,
-      truncated: links.length > 500,
+      truncated: links.length > maxItems,
+      bytes: response.bytes,
+      elapsedMs,
+    };
+  }
+
+  if (format === "images") {
+    const images: PageImage[] = extractPageImages(
+      scopedDocument($, selector, response.finalUrl),
+      response.finalUrl,
+      {
+        ...imageFilter,
+        ...(sameDomainOnly ? { sameDomainOnly: true } : {}),
+      },
+    );
+    return {
+      url,
+      finalUrl: response.finalUrl,
+      status: response.status,
+      contentType: response.contentType,
+      title,
+      description,
+      format,
+      content: "",
+      links: [],
+      images: images.slice(0, maxItems),
+      metadata,
+      truncated: images.length > maxItems,
       bytes: response.bytes,
       elapsedMs,
     };
@@ -262,6 +315,7 @@ export async function scrapeUrl(options: ScrapeOptions): Promise<ScrapeResult> {
       format,
       content: "",
       links: [],
+      images: [],
       metadata,
       truncated: false,
       bytes: response.bytes,
@@ -307,6 +361,7 @@ export async function scrapeUrl(options: ScrapeOptions): Promise<ScrapeResult> {
     format,
     content,
     links: [],
+    images: [],
     metadata,
     truncated,
     bytes: response.bytes,

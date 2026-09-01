@@ -17,6 +17,50 @@ What helps, in order:
 Datacentre IPs (CI runners, cloud VMs, some VPNs) get challenged far more aggressively than
 residential ones. This is why live tests are not in CI.
 
+## `Could not obtain a DuckDuckGo image-search token (vqd)`
+
+`ddg_images` needs a token that only the search page hands out, so it makes two requests: one for
+the token, one for the results. This error means the first one came back without a token — almost
+always rate limiting, occasionally a markup change on DuckDuckGo's side.
+
+Wait several seconds and retry. If it persists while `ddg_search` still works, the token pattern
+has probably moved; `extractVqd` in `src/images.ts` is the one function to fix, and it has
+unit tests covering the shapes the token has taken so far.
+
+Image search is more rate-limit-prone than web search because it has no `lite` front end to fall
+back to. Keep `maxResults` modest — each engine page is about 100 hits, so 20 results is a single
+request.
+
+## An image comes back as an error, or looks broken
+
+`view_image` refuses a response that is neither labelled `image/*` nor recognisable from its file
+header, which is usually one of:
+
+- **Hotlink protection.** The host serves an HTML "no hotlinking" page to requests without a
+  referer. Pass `referer` with the page the image was found on (`sourceUrl` from `ddg_images`).
+- **A login or consent wall.** Nothing to do about it; try another result.
+- **`Response is N bytes, over the limit`.** `view_image` caps at 3MB by default because the bytes
+  are base64-encoded into the conversation. Raise `maxBytes`, or use the `thumbnailUrl` from
+  `ddg_images` instead.
+
+`width` and `height` come back null for formats whose headers are not parsed (AVIF, HEIC, some
+progressive variants). The image itself is still returned.
+
+## `grep_links` or `page_images` finds nothing
+
+Both read the HTML the server sends. A page that renders its content with JavaScript has almost
+nothing in that HTML — there is no headless browser here. Check with
+`scrape_url` at `format: "html"`; if the markup is an empty shell, no amount of filtering will
+help.
+
+Otherwise it is usually a filter that is stricter than intended:
+
+- `minWidth` / `minHeight` only drop images whose markup *declares* a smaller size — but plenty of
+  pages declare nothing, and those are kept. If you got too much back, that is why.
+- `scope: "internal"` compares hosts exactly, so images on a CDN subdomain count as external.
+- `extensions` matches the URL path only. An image CDN serving `/photo?id=1` has no extension;
+  filter by `kinds: ["image"]` instead.
+
 ## Empty results with no notice
 
 If `results` is empty and `notices` is empty too, DuckDuckGo returned a page that parsed cleanly

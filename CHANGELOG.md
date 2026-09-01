@@ -3,6 +3,24 @@
 Notable changes per release. Releases are cut automatically from `main`; see
 [docs/release.md](docs/release.md).
 
+## Unreleased
+
+- `ddg_images` — DuckDuckGo image search, with size, colour, type, layout, licence, recency, region
+  and site filters. Goes through the `vqd` + `i.js` JSON endpoint, since image search has no
+  no-JavaScript HTML front end.
+- `view_image` — fetch an image and return the picture itself as MCP image content, so a
+  vision-capable client can look at it. Pixel dimensions are read from the file header (PNG, JPEG,
+  GIF, WebP, BMP, SVG) with no image library; non-image responses are refused.
+- `page_images` — list every image a page shows: `img` (including `data-src` lazy-loading and
+  `srcset` candidates), `picture` sources, video posters, OpenGraph and Twitter card images, link
+  icons, and CSS `url(...)` backgrounds — with alt text, declared size and origin.
+- `grep_links` — harvest every URL a page references, links and loaded assets alike, then grep them
+  by regex or substring, kind, file extension, internal/external scope or host.
+- `scrape_url` gains the `images` and `assets` formats, an `includeAssets` option for the `links`
+  format, and richer link rows (`kind`, `origin`, `internal`, `ext`).
+- The private-network guard, timeouts and size caps apply to image fetches too.
+- Library exports for `ratduck-search-mcp/images` and `/links`.
+
 ## 0.1.0
 
 Initial release. Distributed from GitHub Pages rather than the npm registry — see

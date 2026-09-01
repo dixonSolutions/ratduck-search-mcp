@@ -12,6 +12,8 @@ const PAGE = `<!DOCTYPE html>
   <meta name="description" content="A page for tests." />
   <meta property="og:site_name" content="RatDuck" />
   <link rel="canonical" href="https://example.com/canonical" />
+  <link rel="stylesheet" href="/css/site.css" />
+  <link rel="icon" href="/favicon.ico" />
   <script type="application/ld+json">{"@type":"Article","headline":"x"}</script>
   <style>body { color: red }</style>
 </head>
@@ -26,6 +28,8 @@ const PAGE = `<!DOCTYPE html>
     <blockquote>Quoted line.</blockquote>
     <table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>
     <p>A closing paragraph that makes the main element comfortably longer than the two hundred character threshold used to pick the main content region, so the readability heuristic selects it.</p>
+    <img src="/img/photo.png" alt="A photo" width="400" height="300" />
+    <a href="/files/report.pdf">Report</a>
     <a href="https://external.example/page">External</a>
     <a href="javascript:alert(1)">Bad</a>
   </main>
@@ -102,6 +106,52 @@ describe("scrapeUrl", () => {
     assert.ok(urls.includes("https://external.example/page"));
     assert.ok(urls.some((url) => url.endsWith("/relative")));
     assert.equal(urls.some((url) => url.startsWith("javascript:")), false);
+  });
+
+  it("classifies the links it lists", async () => {
+    const result = await scrapeUrl({ url: origin, format: "links" });
+    const report = result.links.find((link) => link.url.endsWith("report.pdf"));
+    assert.equal(report?.kind, "document");
+    assert.equal(report?.internal, true);
+    assert.equal(result.links.find((link) => link.url.includes("external.example"))?.internal, false);
+  });
+
+  it("lists anchors only unless assets are asked for", async () => {
+    const anchors = await scrapeUrl({ url: origin, format: "links" });
+    assert.equal(anchors.links.some((link) => link.url.endsWith("site.css")), false);
+
+    const withAssets = await scrapeUrl({ url: origin, format: "links", includeAssets: true });
+    assert.ok(withAssets.links.some((link) => link.url.endsWith("site.css")));
+    assert.ok(withAssets.links.some((link) => link.url.endsWith("report.pdf")));
+  });
+
+  it("lists only the loaded resources in the assets format", async () => {
+    const result = await scrapeUrl({ url: origin, format: "assets" });
+    assert.ok(result.links.some((link) => link.kind === "stylesheet"));
+    assert.equal(result.links.some((link) => link.url.endsWith("report.pdf")), false);
+  });
+
+  it("greps links with a pattern", async () => {
+    const result = await scrapeUrl({
+      url: origin,
+      format: "links",
+      includeAssets: true,
+      linkFilter: { extensions: ["pdf"] },
+    });
+    assert.equal(result.links.length, 1);
+    assert.match(result.links[0]!.url, /report\.pdf$/);
+  });
+
+  it("lists the images a page shows", async () => {
+    const result = await scrapeUrl({ url: origin, format: "images" });
+    const photo = result.images.find((image) => image.url.endsWith("photo.png"));
+    assert.equal(photo?.alt, "A photo");
+    assert.equal(photo?.width, 400);
+    assert.equal(photo?.origin, "img[src]");
+    assert.ok(result.images.some((image) => image.url.endsWith("favicon.ico")));
+
+    const noIcons = await scrapeUrl({ url: origin, format: "images", imageFilter: { excludeIcons: true } });
+    assert.equal(noIcons.images.some((image) => image.url.endsWith("favicon.ico")), false);
   });
 
   it("filters links to the same host on request", async () => {

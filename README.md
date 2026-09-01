@@ -5,8 +5,9 @@
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 An [MCP](https://modelcontextprotocol.io) server that gives an agent the open web: it searches
-DuckDuckGo by scraping the no-JavaScript front end, scrapes any URL you point it at, and filters
-and re-ranks results so the agent gets the *top* handful instead of a wall of links.
+DuckDuckGo for pages *and* images by scraping the no-JavaScript front end, scrapes any URL you
+point it at, greps a page's links and assets, hands the agent an actual image to look at, and
+filters and re-ranks results so it gets the *top* handful instead of a wall of links.
 
 No API keys. No headless browser. No search-provider bill. Not on the npm registry either — it
 installs straight from [its GitHub Pages site](https://dixonsolutions.github.io/ratduck-search-mcp/).
@@ -17,7 +18,11 @@ installs straight from [its GitHub Pages site](https://dixonsolutions.github.io/
 | --- | --- |
 | `ddg_search` | Search DuckDuckGo. Returns title, URL, domain and snippet per result. Supports `site:` restriction, region, safe search, time range, domain exclusion and paging. |
 | `ddg_top_results` | Search, filter, then re-rank by keyword coverage, host authority and engine position, and return the best few. Optionally scrapes each winner's page in the same call. |
-| `scrape_url` | Fetch any http(s) URL as markdown, plain text, raw HTML, a link list, or page metadata. Supports CSS selectors and boilerplate stripping. |
+| `ddg_images` | Search DuckDuckGo Images. Returns the direct image URL, thumbnail, source page and pixel size. Filters for size, colour, type, layout, licence and recency. |
+| `view_image` | Fetch an image and return the picture itself, so a vision-capable client can actually look at it. Reports real dimensions read from the file header. |
+| `scrape_url` | Fetch any http(s) URL as markdown, plain text, raw HTML, a link list, an asset list, an image list, or page metadata. Supports CSS selectors and boilerplate stripping. |
+| `page_images` | List every image a page shows — `img`, `srcset`, `picture`, video posters, OpenGraph cards, icons, CSS backgrounds — with alt text, declared size and where each was found. |
+| `grep_links` | Grep every URL a page references, whether links to other sites or the assets it loads. Filter by regex, kind, file extension, internal vs external, or host. |
 | `filter_results` | Narrow and re-rank results you already have — by domain, terms, regex, snippet length, per-domain cap — without spending another request on DuckDuckGo. |
 
 Full parameter reference: [docs/tools.md](docs/tools.md).
@@ -73,17 +78,42 @@ More clients and troubleshooting: [docs/install.md](docs/install.md).
 The agent calls `ddg_top_results` with `count: 3`, `fetchContent: true`, and gets back ranked
 results plus the page text — one round trip.
 
+```
+> "find a wide public-domain photo of an aurora and show it to me"
+```
+
+`ddg_images` with `layout: "wide"` and `license: "public"`, then `view_image` on the winner's
+`imageUrl` — and the picture itself comes back, not a link to it.
+
+```
+> "list every PDF linked from this docs page, and every script it loads from a CDN"
+```
+
+`grep_links` twice: once with `kinds: ["document"], extensions: ["pdf"]`, once with
+`include: "assets", kinds: ["script"], scope: "external"`.
+
 Programmatic use works too, since the package exports its internals (install the tarball as a
 project dependency the same way, `npm install ./ratduck-search-mcp-latest.tgz`):
 
 ```ts
 import { search } from "ratduck-search-mcp/ddg";
 import { topResults } from "ratduck-search-mcp/filter";
+import { searchImages, viewImage } from "ratduck-search-mcp/images";
 import { scrapeUrl } from "ratduck-search-mcp/scrape";
 
 const response = await search({ query: "rust async runtime", maxResults: 25 });
 const best = topResults(response.results, response.effectiveQuery, 3, { excludeHomepages: true });
 const page = await scrapeUrl({ url: best[0].url, format: "markdown", maxChars: 4000 });
+
+const images = await searchImages({ query: "aurora borealis", size: "large", maxResults: 10 });
+const picture = await viewImage({ url: images.results[0].imageUrl });  // base64 + real dimensions
+
+const pdfs = await scrapeUrl({
+  url: "https://example.com/docs",
+  format: "links",
+  includeAssets: true,
+  linkFilter: { extensions: ["pdf"] },
+});
 ```
 
 ## Configuration
@@ -93,7 +123,7 @@ All optional, all environment variables:
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `RATDUCK_TIMEOUT_MS` | `15000` | Per-request timeout. |
-| `RATDUCK_MAX_BYTES` | `4000000` | Maximum response body size. |
+| `RATDUCK_MAX_BYTES` | `4000000` | Maximum response body size. `view_image` applies its own, tighter default. |
 | `RATDUCK_USER_AGENT` | rotating | Pin a single User-Agent instead of rotating. |
 | `RATDUCK_ALLOW_PRIVATE` | unset | Set to `1` to allow scraping loopback/private addresses. Off by default. |
 
@@ -103,9 +133,14 @@ All optional, all environment variables:
   link-local (including `169.254.169.254`) and CGNAT addresses, so a URL that arrives from a web
   page cannot turn the server into an internal-network probe. Override with `RATDUCK_ALLOW_PRIVATE=1`
   only when you mean it.
-- **Everything returned is untrusted.** Search snippets and scraped pages are attacker-controllable
-  text. The server declares this in its MCP instructions, but the client is what ultimately has to
-  treat tool output as data rather than instructions.
+- **Everything returned is untrusted.** Search snippets, scraped pages and images are all
+  attacker-controllable. The server declares this in its MCP instructions, but the client is what
+  ultimately has to treat tool output as data rather than instructions. Text rendered *inside* a
+  picture reaches a vision model just as readable as text in a snippet, so `view_image` output
+  deserves the same suspicion as everything else.
+- **Image bytes cost tokens.** `view_image` base64-encodes what it fetches into the conversation,
+  so it refuses anything over 3MB by default. Prefer a `thumbnailUrl` from `ddg_images` when you
+  only need to see roughly what a picture is.
 - **Rate limits.** DuckDuckGo challenges bursty traffic. The server detects the challenge page,
   falls back from `html.duckduckgo.com` to `lite.duckduckgo.com`, spaces out paged requests, and
   reports what happened in the result's `notices` instead of failing silently.

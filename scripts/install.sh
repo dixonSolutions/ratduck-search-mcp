@@ -106,6 +106,7 @@ cat <<'CONFIG'
     }
   }
 
-  Tools: ddg_search, ddg_top_results, scrape_url, filter_results
+  Tools: ddg_search, ddg_top_results, ddg_images, view_image,
+         scrape_url, page_images, grep_links, filter_results
   Docs:  https://github.com/dixonSolutions/ratduck-search-mcp
 CONFIG

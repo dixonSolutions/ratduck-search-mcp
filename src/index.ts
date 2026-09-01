@@ -6,13 +6,16 @@ import { createServer, SERVER_NAME, SERVER_VERSION } from "./server.js";
 
 export { createServer, SERVER_NAME, SERVER_VERSION } from "./server.js";
 export { search, parseResultsPage } from "./ddg.js";
+export { searchImages, viewImage, imageInfo } from "./images.js";
+export { harvestLinks, grepLinks, extractPageImages, classifyLink } from "./links.js";
 export { scrapeUrl } from "./scrape.js";
 export { filterResults, rankResults, topResults } from "./filter.js";
 export type * from "./types.js";
 
 const HELP = `${SERVER_NAME} v${SERVER_VERSION}
 
-An MCP server that searches DuckDuckGo, scrapes URLs and filters/ranks results.
+An MCP server that searches DuckDuckGo (web and images), scrapes URLs, greps a page's
+links and assets, and filters/ranks results.
 It speaks MCP over stdio, so it is normally launched by an MCP client rather than by hand.
 
 Usage:
@@ -26,7 +29,8 @@ Environment:
   RATDUCK_USER_AGENT   Override the rotating User-Agent
   RATDUCK_ALLOW_PRIVATE=1  Allow scraping private/loopback addresses (off by default)
 
-Tools: ddg_search, ddg_top_results, scrape_url, filter_results
+Tools: ddg_search, ddg_top_results, ddg_images, view_image,
+       scrape_url, page_images, grep_links, filter_results
 Docs:  https://github.com/dixonSolutions/ratduck-search-mcp
 `;
 

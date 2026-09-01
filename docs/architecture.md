@@ -4,17 +4,20 @@
 src/
   index.ts    CLI entrypoint: --help/--version, stdio transport, signal handling
   server.ts   builds the McpServer and its instructions
-  tools.ts    the four MCP tool definitions (zod schemas, rendering, error handling)
-  ddg.ts      DuckDuckGo: URL building, paging, HTML parsing for both front ends
-  scrape.ts   arbitrary-URL fetch and extraction (markdown/text/html/links/metadata)
+  tools.ts    the eight MCP tool definitions (zod schemas, rendering, error handling)
+  ddg.ts      DuckDuckGo web search: URL building, paging, HTML parsing for both front ends
+  images.ts   DuckDuckGo image search (vqd + i.js), and fetching an image for a client to view
+  links.ts    harvesting a page's links and assets, classifying them, grepping them — pure
+  scrape.ts   arbitrary-URL fetch and extraction (markdown/text/html/links/assets/images/metadata)
   filter.ts   filtering, scoring, ranking — pure functions, no I/O
   http.ts     fetch wrapper: timeouts, retries, size caps, the private-network guard
   types.ts    shared shapes
 ```
 
-The layering is deliberate: `filter.ts` is pure, `ddg.ts` and `scrape.ts` do I/O only through
-`http.ts`, and `tools.ts` is the only file that knows about MCP. That is what makes the package
-usable as a plain library (`ratduck-search-mcp/ddg`, `/scrape`, `/filter`) as well as a server.
+The layering is deliberate: `filter.ts` and `links.ts` are pure, `ddg.ts`, `images.ts` and
+`scrape.ts` do I/O only through `http.ts`, and `tools.ts` is the only file that knows about MCP.
+That is what makes the package usable as a plain library (`ratduck-search-mcp/ddg`, `/images`,
+`/links`, `/scrape`, `/filter`) as well as a server.
 
 ## Searching DuckDuckGo
 
@@ -50,6 +53,53 @@ This is scraping. If DuckDuckGo changes its markup, parsing breaks. The mitigati
 independent front ends, parsers isolated in `parseResultsPage` / `parseLitePage` with fixture-based
 tests, and explicit `notices` rather than silent empty results. `npm run test:live` exercises the
 real endpoints when you want to know whether the markup still matches.
+
+## Searching for images
+
+Image search has no no-JavaScript front end to scrape: `duckduckgo.com/?q=…&ia=images` is a
+JavaScript shell that calls `i.js`, and `i.js` refuses to answer without a `vqd` token minted by
+that shell. So `images.ts` does it in two steps — fetch the shell and regex the token out of it,
+then spend the token on the JSON endpoint with `x-requested-with: XMLHttpRequest` and a
+`duckduckgo.com` referer, the way the page's own script does.
+
+Filters go in a single `f` parameter with six comma-separated slots — time, size, colour, type,
+layout, licence — and empty slots stay empty (`,,,,,` means no filters at all). Paging follows the
+`s=` offset out of the response's own `next` field rather than guessing.
+
+The token is the fragile part: no token means no search, and that surfaces as a clear `blocked`
+error rather than an empty list. A payload that comes back as HTML instead of JSON is a challenge
+page, and is reported in `notices` like every other rate limit.
+
+## Looking at an image
+
+`view_image` is the only path in the server that returns bytes rather than text. It fetches through
+`fetchBinary` — same private-network guard, timeout and size cap as everything else, but with a
+tighter default budget (3MB), because the bytes are base64-encoded into the conversation and cost
+tokens.
+
+Pixel dimensions are read out of the file header rather than by decoding the image: PNG IHDR, GIF
+logical screen descriptor, the JPEG segment chain walked to its first start-of-frame marker, the
+three WebP chunk layouts, BMP, and the `width`/`height`/`viewBox` of an SVG. No image library, no
+native dependency. An unrecognised format is still returned, with null dimensions.
+
+A response that is neither labelled `image/*` nor recognisable from its header is refused, so a
+"403, please log in" HTML page does not arrive as a broken picture.
+
+## Harvesting links and assets
+
+`links.ts` walks a parsed document once and collects every attribute that can carry a URL — `href`,
+`src`, `srcset`, `poster`, `data`, `action`, lazy-loading `data-*` variants, OpenGraph URLs, and
+`url(...)` inside both `style` attributes and `<style>` blocks.
+
+Each URL is bucketed into a `kind`. The element decides where it is unambiguous — an `<img>` is an
+image whether or not its URL ends in `.png`, which matters on image CDNs that serve extensionless
+URLs — and the file extension decides the rest. `origin` records which element it came from, which
+is what lets a caller tell a content image from a favicon, or a first-party script from a CDN one.
+
+`grepLinks` then filters that list: regex or substring over URL and/or text, `invert` for grep -v,
+plus kind, extension, internal/external scope and host filters. It is all pure, so `format: links`,
+`format: assets`, `grep_links` and `page_images` are one extraction path with different filters
+rather than four parsers.
 
 ## Scraping a URL
 

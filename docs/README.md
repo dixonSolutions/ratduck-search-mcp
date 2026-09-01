@@ -3,8 +3,8 @@
 | Document | What's in it |
 | --- | --- |
 | [install.md](install.md) | Installing the server and wiring it into MCP clients. |
-| [tools.md](tools.md) | Full parameter and output reference for all four tools. |
-| [architecture.md](architecture.md) | How search, scraping, filtering and ranking fit together. |
+| [tools.md](tools.md) | Full parameter and output reference for all eight tools. |
+| [architecture.md](architecture.md) | How search, images, scraping, link harvesting, filtering and ranking fit together. |
 | [ranking.md](ranking.md) | Exactly how "top results" are scored, and how to tune it. |
 | [release.md](release.md) | The commit-to-main release pipeline and the secrets it needs. |
 | [contributing.md](contributing.md) | Local setup, tests, and conventions. |
